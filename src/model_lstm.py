@@ -11,7 +11,6 @@ class LSTMModel(nn.Module):
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         
-        # Capa LSTM que implementa as compuertas (Forget, Input, Candidate e Output Gates)
         self.lstm = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
