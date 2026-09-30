@@ -63,9 +63,10 @@ def objective(trial):
 
     model_path = os.path.join(wandb.run.dir, f"best_lstm_trial_{trial.number}.pth")
 
-    epochs = 30
+    epochs = 20
     inference_times = []
     best_val_loss = float("inf")
+    best_pocid_at_best_loss = 0.0
     best_targets_usd, best_preds_usd = None, None
 
     for epoch in range(epochs):
@@ -82,6 +83,7 @@ def objective(trial):
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            best_pocid_at_best_loss = metrics["pocid_percent"]
             best_targets_usd, best_preds_usd = targets_usd, preds_usd
             torch.save(model.state_dict(), model_path)
 
@@ -119,41 +121,35 @@ def objective(trial):
     trial.set_user_attr("avg_inference_time", average_inference_time)
     wandb.finish()
 
-    return best_val_loss
+    return best_val_loss, best_pocid_at_best_loss
 
 
 if __name__ == "__main__":
-    pruner = optuna.pruners.MedianPruner(
-        n_startup_trials=5, 
-        n_warmup_steps=5
-    )
+    pruner = optuna.pruners.NopPruner()
 
     study = optuna.create_study(
-        study_name="bitcoin-lstm-",
+        study_name="bitcoin-lstm-multiobjective",
         storage="sqlite:///bitcoin_lstm_optuna.db",
-        direction="minimize",
-        sampler=optuna.samplers.TPESampler(),
+        directions=["minimize", "maximize"], # Loss e POCID        sampler=optuna.samplers.TPESampler(),
         pruner=pruner,
         load_if_exists=True
     )
-    study.optimize(objective, n_trials=40,n_jobs=2)
+    study.optimize(objective, n_trials=30,n_jobs=2)
 
-    # Filtra e exibe o Top 3 com menor Loss
-    completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-    sorted_trials = sorted(completed_trials, key=lambda t: t.value, reverse=False)
-    top_3_trials = sorted_trials[:3]
+    print("\n================ MODELOS DA FRONTEIRA DE PARETO ================\n")
 
-    print(f"\n================ TOP {len(top_3_trials)} MELHORES MODELOS (MENOR LOSS) ================\n")
+    best_trials = study.best_trials  # Retorna todos os trials não-dominados (ótimos em pelo menos 1 aspecto)
 
-    for rank, trial in enumerate(top_3_trials, 1):
-        loss_val = trial.value
+    for rank, trial in enumerate(best_trials, 1):
+        loss_val, pocid_val = trial.values
         inference_time = trial.user_attrs.get("avg_inference_time")
 
-        print(f"--- Top {rank} (Trial #{trial.number}) ---")
-        print(f"Validation Loss: {loss_val:.6f}")
+        print(f"--- Modelo Pareto #{rank} (Trial #{trial.number}) ---")
+        print(f"  - Validation Loss (Minimizar): {loss_val:.6f}")
+        print(f"  - Validation POCID (Maximizar): {pocid_val:.2f}%")
         if inference_time is not None:
-            print(f"Average Inference Time: {inference_time:.6f} sec/batch")
-        print("Hyperparameters:")
+            print(f"  - Avg Inference Time: {inference_time:.6f} sec/batch")
+        print("  Hiperparâmetros:")
         for param, val in trial.params.items():
-            print(f"  - {param}: {val}")
+            print(f"    * {param}: {val}")
         print("-" * 50 + "\n")

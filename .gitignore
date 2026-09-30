@@ -224,3 +224,6 @@ __marimo__/
 
 
 checkpoints/
+
+.venv2
+data
