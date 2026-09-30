@@ -136,7 +136,7 @@ if __name__ == "__main__":
         pruner=pruner,
         load_if_exists=True
     )
-    study.optimize(objective, n_trials=40,n_jobs=2)
+    study.optimize(objective, n_trials=50,n_jobs=2)
 
     # Filtra e exibe o Top 3 com menor Loss
     completed_trials = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]

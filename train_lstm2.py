@@ -63,7 +63,7 @@ def objective(trial):
 
     model_path = os.path.join(wandb.run.dir, f"best_lstm_trial_{trial.number}.pth")
 
-    epochs = 20
+    epochs = 30
     inference_times = []
     best_val_loss = float("inf")
     best_pocid_at_best_loss = 0.0
@@ -134,7 +134,7 @@ if __name__ == "__main__":
         pruner=pruner,
         load_if_exists=True
     )
-    study.optimize(objective, n_trials=30,n_jobs=2)
+    study.optimize(objective, n_trials=50,n_jobs=2)
 
     print("\n================ MODELOS DA FRONTEIRA DE PARETO ================\n")
 
