@@ -52,7 +52,7 @@ def fetch_best_run_from_wandb(group_name, metric_name="val_loss", mode="min"):
             
     return best_run
 
-def download_checkpoint_from_wandb(run):
+def download_checkpoint_from_wandb(run, preferred_prefix="best_loss_"):
     """
     Faz o download do arquivo .pth associado à run diretamente do servidor do WandB.
     """
@@ -60,10 +60,15 @@ def download_checkpoint_from_wandb(run):
     
     # Procura o arquivo .pth salvo nos arquivos da run
     target_file = None
+    fallback_file = None
     for file in run.files():
         if file.name.endswith(".pth"):
-            target_file = file
-            break
+            fallback_file = fallback_file or file
+            if os.path.basename(file.name).startswith(preferred_prefix):
+                target_file = file
+                break
+
+    target_file = target_file or fallback_file
             
     if target_file is None:
         raise FileNotFoundError(f"Nenhum arquivo .pth encontrado na run {run.id} do WandB.")
@@ -127,7 +132,7 @@ def evaluate_best_model_wandb(group_name, model_type="LSTM"):
     print(f"\n================ AVALIANDO MELHOR MODELO ONLINE ({model_type.upper()}) ================")
     
     try:
-        run = fetch_best_run_from_wandb(group_name, metric_name="val_loss", mode="min")
+        run = fetch_best_run_from_wandb(group_name, metric_name="best_val_mse", mode="min")
         if not run:
             print(f"❌ Nenhuma run encontrada para o grupo '{group_name}'.")
             return None
@@ -137,7 +142,7 @@ def evaluate_best_model_wandb(group_name, model_type="LSTM"):
 
     os.makedirs("test_results", exist_ok=True)
     config = run.config
-    val_loss = run.summary.get("val_loss", None)
+    val_loss = run.summary.get("best_val_mse", run.summary.get("val_loss", None))
     
     user_info = run.user.username if hasattr(run, "user") and run.user else "N/A"
     print(f"Run Campeã WandB: {run.name} (ID: {run.id}) | Criador: {user_info}")
@@ -147,7 +152,7 @@ def evaluate_best_model_wandb(group_name, model_type="LSTM"):
 
     # 1. Baixa o checkpoint diretamente do WandB
     try:
-        checkpoint_path = download_checkpoint_from_wandb(run)
+        checkpoint_path = download_checkpoint_from_wandb(run, preferred_prefix="best_loss_")
     except Exception as e:
         print(f"❌ Erro no download do modelo: {e}")
         return None

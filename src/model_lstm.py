@@ -57,6 +57,8 @@ def train_epoch(model, dataloader, optimizer, criterion, epoch=0, total_epochs=1
     pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{total_epochs} [Train]", leave=False)
 
     for sequences, targets in pbar:
+        device = next(model.parameters()).device
+        sequences, targets = sequences.to(device), targets.to(device)
         optimizer.zero_grad()
         
         outputs = model(sequences)
@@ -83,6 +85,8 @@ def validate_epoch(model, dataloader, criterion, epoch=0, total_epochs=10):
     
     with torch.no_grad():
         for sequences, targets in pbar:
+            device = next(model.parameters()).device
+            sequences, targets = sequences.to(device), targets.to(device)
             outputs = timed_model(sequences)
             loss = criterion(outputs, targets)
             

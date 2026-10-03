@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import optuna
 import wandb
 import torch
@@ -56,22 +57,31 @@ def objective(trial):
         num_layers=num_layers,
         output_size=1,
         dropout_rate=dropout_rate
-    )
+    ).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
     criterion = nn.MSELoss() if criterion_name == "MSELoss" else nn.L1Loss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    model_path = os.path.join(wandb.run.dir, f"best_lstm_trial_{trial.number}.pth")
+    best_loss_path = os.path.join(wandb.run.dir, f"best_loss_lstm_trial_{trial.number}.pth")
+    best_pocid_path = os.path.join(wandb.run.dir, f"best_pocid_lstm_trial_{trial.number}.pth")
 
     epochs = 20
     inference_times = []
     best_val_loss = float("inf")
-    best_pocid_at_best_loss = 0.0
-    best_targets_usd, best_preds_usd = None, None
+    best_pocid = float("-inf")
+    best_loss_pocid = 0.0
+    best_loss_targets_usd, best_loss_preds_usd = None, None
 
     for epoch in range(epochs):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, epoch + 1, epochs)
-        val_loss, inference_time, targets, preds = validate_epoch(model, val_loader, criterion, epoch + 1, epochs)
+        val_train_loss, inference_time, targets, preds = validate_epoch(
+            model, val_loader, criterion, epoch + 1, epochs
+        )
+
+        # Fixed objective metric: this makes MSE-trained and L1-trained trials comparable.
+        targets_array = np.asarray(targets).squeeze()
+        preds_array = np.asarray(preds).squeeze()
+        val_mse = float(np.mean((preds_array - targets_array) ** 2))
         
         inference_times.append(inference_time)
 
@@ -81,17 +91,22 @@ def objective(trial):
 
         metrics = calculate_metrics(targets_usd, preds_usd)
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_pocid_at_best_loss = metrics["pocid_percent"]
-            best_targets_usd, best_preds_usd = targets_usd, preds_usd
-            torch.save(model.state_dict(), model_path)
+        if val_mse < best_val_loss:
+            best_val_loss = val_mse
+            best_loss_pocid = metrics["pocid_percent"]
+            best_loss_targets_usd, best_loss_preds_usd = targets_usd, preds_usd
+            torch.save(model.state_dict(), best_loss_path)
+
+        if metrics["pocid_percent"] > best_pocid:
+            best_pocid = metrics["pocid_percent"]
+            torch.save(model.state_dict(), best_pocid_path)
 
         # Log de métricas no W&B
         log_data = {
             "epoch": epoch + 1,
             "train_loss": train_loss,
-            "val_loss": val_loss,
+            "val_train_loss": val_train_loss,
+            "val_mse": val_mse,
             "val_mae_usd": metrics["mae"],
             "val_rmse_usd": metrics["rmse"],
             "val_mape_percent": metrics["mape_percent"],
@@ -101,37 +116,34 @@ def objective(trial):
 
         wandb.log(log_data)
 
-        trial.report(val_loss, epoch)
+    # Multi-objective Optuna does not support trial.report()/pruning.
+    wandb.summary["best_val_mse"] = best_val_loss
+    wandb.summary["best_pocid_percent"] = best_pocid
+    wandb.summary["pocid_at_best_val_mse"] = best_loss_pocid
 
-        if trial.should_prune():
-            wandb.run.summary["pruned"] = True
-            wandb.finish()
-            raise optuna.exceptions.TrialPruned()
-
-
-    # 3. Plota e envia o gráfico comparativo do melhor momento para o W&B
-    fig = plot_predictions_figure(best_targets_usd, best_preds_usd)
-    wandb.log({"predictions_plot": wandb.Image(fig)})
+    # Plot the checkpoint selected by the loss objective.
+    fig = plot_predictions_figure(best_loss_targets_usd, best_loss_preds_usd)
+    wandb.log({"best_loss_predictions_plot": wandb.Image(fig)})
     plt.close(fig)
 
-    if os.path.exists(model_path):
-        wandb.save(model_path, base_path=run.dir)
+    if os.path.exists(best_loss_path):
+        wandb.save(best_loss_path, base_path=run.dir)
+    if os.path.exists(best_pocid_path):
+        wandb.save(best_pocid_path, base_path=run.dir)
 
     average_inference_time = sum(inference_times) / len(inference_times)
     trial.set_user_attr("avg_inference_time", average_inference_time)
     wandb.finish()
 
-    return best_val_loss, best_pocid_at_best_loss
+    return best_val_loss, best_pocid
 
 
 if __name__ == "__main__":
-    pruner = optuna.pruners.NopPruner()
-
     study = optuna.create_study(
         study_name="bitcoin-lstm-multiobjective",
         storage="sqlite:///bitcoin_lstm_optuna.db",
-        directions=["minimize", "maximize"], # Loss e POCID        sampler=optuna.samplers.TPESampler(),
-        pruner=pruner,
+        directions=["minimize", "maximize"],  # Validation MSE and POCID
+        sampler=optuna.samplers.TPESampler(),
         load_if_exists=True
     )
     study.optimize(objective, n_trials=30,n_jobs=2)
@@ -139,6 +151,24 @@ if __name__ == "__main__":
     print("\n================ MODELOS DA FRONTEIRA DE PARETO ================\n")
 
     best_trials = study.best_trials  # Retorna todos os trials não-dominados (ótimos em pelo menos 1 aspecto)
+
+    completed_trials = [
+        trial for trial in study.trials
+        if trial.state == optuna.trial.TrialState.COMPLETE
+    ]
+    best_loss_trial = min(completed_trials, key=lambda trial: trial.values[0])
+    best_pocid_trial = max(completed_trials, key=lambda trial: trial.values[1])
+
+    print("================ MELHORES OBJETIVOS INDIVIDUAIS ================")
+    print(
+        f"Best validation MSE: {best_loss_trial.values[0]:.6f} "
+        f"(Trial #{best_loss_trial.number})"
+    )
+    print(
+        f"Best validation POCID: {best_pocid_trial.values[1]:.2f}% "
+        f"(Trial #{best_pocid_trial.number})"
+    )
+    print("These may be different trials; the Pareto front below contains the trade-offs.\n")
 
     for rank, trial in enumerate(best_trials, 1):
         loss_val, pocid_val = trial.values
