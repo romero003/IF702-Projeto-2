@@ -41,7 +41,6 @@ def objective(trial):
             "seq_length": seq_length,
             "criterion": criterion_name
         },
-        reinit=True
     )
 
     # 1. Carrega os DataLoaders com a janela de sequência atual do trial
@@ -62,10 +61,10 @@ def objective(trial):
     criterion = nn.MSELoss() if criterion_name == "MSELoss" else nn.L1Loss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    best_loss_path = os.path.join(wandb.run.dir, f"best_loss_lstm_trial_{trial.number}.pth")
-    best_pocid_path = os.path.join(wandb.run.dir, f"best_pocid_lstm_trial_{trial.number}.pth")
+    best_loss_path = os.path.join(run.dir, f"best_loss_lstm_trial_{trial.number}.pth")
+    best_pocid_path = os.path.join(run.dir, f"best_pocid_lstm_trial_{trial.number}.pth")
 
-    epochs = 20
+    epochs = 5
     inference_times = []
     best_val_loss = float("inf")
     best_pocid = float("-inf")
@@ -114,26 +113,26 @@ def objective(trial):
             "val_inference_time_batch": inference_time
         }
 
-        wandb.log(log_data)
+        run.log(log_data)
 
     # Multi-objective Optuna does not support trial.report()/pruning.
-    wandb.summary["best_val_mse"] = best_val_loss
-    wandb.summary["best_pocid_percent"] = best_pocid
-    wandb.summary["pocid_at_best_val_mse"] = best_loss_pocid
+    run.summary["best_val_mse"] = best_val_loss
+    run.summary["best_pocid_percent"] = best_pocid
+    run.summary["pocid_at_best_val_mse"] = best_loss_pocid
 
     # Plot the checkpoint selected by the loss objective.
     fig = plot_predictions_figure(best_loss_targets_usd, best_loss_preds_usd)
-    wandb.log({"best_loss_predictions_plot": wandb.Image(fig)})
+    run.log({"best_loss_predictions_plot": wandb.Image(fig)})
     plt.close(fig)
 
     if os.path.exists(best_loss_path):
-        wandb.save(best_loss_path, base_path=run.dir)
+        run.save(best_loss_path)
     if os.path.exists(best_pocid_path):
-        wandb.save(best_pocid_path, base_path=run.dir)
+        run.save(best_pocid_path)
 
     average_inference_time = sum(inference_times) / len(inference_times)
     trial.set_user_attr("avg_inference_time", average_inference_time)
-    wandb.finish()
+    run.finish()
 
     return best_val_loss, best_pocid
 
@@ -146,7 +145,9 @@ if __name__ == "__main__":
         sampler=optuna.samplers.TPESampler(),
         load_if_exists=True
     )
-    study.optimize(objective, n_trials=30,n_jobs=2)
+    # W&B runs are not thread-safe when multiple Optuna trials share one process.
+    # Run trials sequentially so each trial has an isolated active W&B run.
+    study.optimize(objective, n_trials=30, n_jobs=1)
 
     print("\n================ MODELOS DA FRONTEIRA DE PARETO ================\n")
 
