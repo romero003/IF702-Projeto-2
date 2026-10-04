@@ -204,8 +204,6 @@ if __name__ == "__main__":
     # Run trials sequentially so each trial has an isolated active W&B run.
     study.optimize(objective, n_trials=30, n_jobs=1)
 
-    print("\n================ MODELOS DA FRONTEIRA DE PARETO ================\n")
-
     best_trials = study.best_trials  # Retorna todos os trials não-dominados (ótimos em pelo menos 1 aspecto)
 
     completed_trials = [
@@ -225,6 +223,8 @@ if __name__ == "__main__":
         f"(Trial #{best_pocid_trial.number})"
     )
     print("These may be different trials; the Pareto front below contains the trade-offs.\n")
+
+    print("\n================ MODELOS DA FRONTEIRA DE PARETO ================\n")
 
     for rank, trial in enumerate(best_trials, 1):
         loss_val, pocid_val = trial.values
