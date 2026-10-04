@@ -64,17 +64,23 @@ def objective(trial):
     best_loss_path = os.path.join(run.dir, f"best_loss_lstm_trial_{trial.number}.pth")
     best_pocid_path = os.path.join(run.dir, f"best_pocid_lstm_trial_{trial.number}.pth")
 
-    epochs = 5
+    max_epochs = 50
+    patience = 8
+    mse_min_delta = 1e-4
+    pocid_min_delta = 0.5  # percentage points
+    epochs_without_improvement = 0
     inference_times = []
     best_val_loss = float("inf")
     best_pocid = float("-inf")
     best_loss_pocid = 0.0
     best_loss_targets_usd, best_loss_preds_usd = None, None
 
-    for epoch in range(epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, epoch + 1, epochs)
+    for epoch in range(max_epochs):
+        train_loss = train_epoch(
+            model, train_loader, optimizer, criterion, epoch + 1, max_epochs
+        )
         val_train_loss, inference_time, targets, preds = validate_epoch(
-            model, val_loader, criterion, epoch + 1, epochs
+            model, val_loader, criterion, epoch + 1, max_epochs
         )
 
         # Fixed objective metric: this makes MSE-trained and L1-trained trials comparable.
@@ -90,15 +96,23 @@ def objective(trial):
 
         metrics = calculate_metrics(targets_usd, preds_usd)
 
-        if val_mse < best_val_loss:
+        mse_improved = val_mse < best_val_loss - mse_min_delta
+        pocid_improved = metrics["pocid_percent"] > best_pocid + pocid_min_delta
+
+        if mse_improved:
             best_val_loss = val_mse
             best_loss_pocid = metrics["pocid_percent"]
             best_loss_targets_usd, best_loss_preds_usd = targets_usd, preds_usd
             torch.save(model.state_dict(), best_loss_path)
 
-        if metrics["pocid_percent"] > best_pocid:
+        if pocid_improved:
             best_pocid = metrics["pocid_percent"]
             torch.save(model.state_dict(), best_pocid_path)
+
+        if mse_improved or pocid_improved:
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
 
         # Log de métricas no W&B
         log_data = {
@@ -110,15 +124,25 @@ def objective(trial):
             "val_rmse_usd": metrics["rmse"],
             "val_mape_percent": metrics["mape_percent"],
             "val_pocid_percent": metrics["pocid_percent"],
-            "val_inference_time_batch": inference_time
+            "val_inference_time_batch": inference_time,
+            "epochs_without_improvement": epochs_without_improvement
         }
 
         run.log(log_data)
+
+        if epochs_without_improvement >= patience:
+            print(
+                f"Early stopping at epoch {epoch + 1}: "
+                f"no MSE or POCID improvement for {patience} epochs."
+            )
+            break
 
     # Multi-objective Optuna does not support trial.report()/pruning.
     run.summary["best_val_mse"] = best_val_loss
     run.summary["best_pocid_percent"] = best_pocid
     run.summary["pocid_at_best_val_mse"] = best_loss_pocid
+    run.summary["epochs_ran"] = epoch + 1
+    run.summary["early_stopped"] = (epoch + 1) < max_epochs
 
     # Plot the checkpoint selected by the loss objective.
     fig = plot_predictions_figure(best_loss_targets_usd, best_loss_preds_usd)
