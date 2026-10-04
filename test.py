@@ -182,6 +182,17 @@ def evaluate_best_model_wandb(group_name, model_type="LSTM"):
     # 5. Avalia no conjunto de Teste (Regressão)
     metrics, test_loss, inf_time = evaluate_on_test(model, test_loader, scaler)
 
+    run.summary.update({
+        "test_loss": float(test_loss),
+        "test_mape_percent": float(metrics["test_mape"]),
+        "test_mae_usd": float(metrics["test_mae"]),
+        "test_rmse_usd": float(metrics["test_rmse"]),
+        "test_pocid_percent": float(metrics["test_pocid"]),
+        "test_inference_time_batch": float(inf_time),
+        "test_checkpoint": os.path.basename(checkpoint_path)
+    })
+    run.update()
+
     print(f"-> TEST Loss: {test_loss:.6f}")
     print(f"-> TEST MAPE: {metrics['test_mape']:.2f}%")
     print(f"-> TEST MAE: {metrics['test_mae']:.4f}")

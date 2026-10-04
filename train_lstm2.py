@@ -13,6 +13,12 @@ from src.metrics import calculate_metrics, plot_predictions_figure
 from src.utils import desnormalizar_target
 
 
+MAX_EPOCHS = 50
+PATIENCE = 8
+MSE_MIN_DELTA = 1e-4
+POCID_MIN_DELTA = 0.5  # percentage points
+
+
 def objective(trial):
     # --- Hiperparâmetros a serem otimizados ---
     lr = trial.suggest_float("lr", 1e-4, 1e-2, log=True)
@@ -39,7 +45,11 @@ def objective(trial):
             "dropout_rate": dropout_rate,
             "weight_decay": weight_decay,
             "seq_length": seq_length,
-            "criterion": criterion_name
+            "criterion": criterion_name,
+            "max_epochs": MAX_EPOCHS,
+            "patience": PATIENCE,
+            "mse_min_delta": MSE_MIN_DELTA,
+            "pocid_min_delta": POCID_MIN_DELTA
         },
     )
 
@@ -48,6 +58,13 @@ def objective(trial):
         batch_size=batch_size,
         seq_length=seq_length
     )
+
+    run.config.update({
+        "scaler_mean": scaler.mean_.tolist(),
+        "scaler_scale": scaler.scale_.tolist(),
+        "scaler_var": scaler.var_.tolist(),
+        "scaler_n_samples_seen": int(scaler.n_samples_seen_)
+    }, allow_val_change=True)
 
     # 2. Constrói a arquitetura da LSTM (5 colunas de entrada: open, high, low, close, number_of_trades)
     model = build_lstm(
@@ -64,15 +81,17 @@ def objective(trial):
     best_loss_path = os.path.join(run.dir, f"best_loss_lstm_trial_{trial.number}.pth")
     best_pocid_path = os.path.join(run.dir, f"best_pocid_lstm_trial_{trial.number}.pth")
 
-    max_epochs = 50
-    patience = 8
-    mse_min_delta = 1e-4
-    pocid_min_delta = 0.5  # percentage points
+    max_epochs = MAX_EPOCHS
+    patience = PATIENCE
+    mse_min_delta = MSE_MIN_DELTA
+    pocid_min_delta = POCID_MIN_DELTA
     epochs_without_improvement = 0
     inference_times = []
     best_val_loss = float("inf")
     best_pocid = float("-inf")
     best_loss_pocid = 0.0
+    best_mse_epoch = 0
+    best_pocid_epoch = 0
     best_loss_targets_usd, best_loss_preds_usd = None, None
 
     for epoch in range(max_epochs):
@@ -102,11 +121,13 @@ def objective(trial):
         if mse_improved:
             best_val_loss = val_mse
             best_loss_pocid = metrics["pocid_percent"]
+            best_mse_epoch = epoch + 1
             best_loss_targets_usd, best_loss_preds_usd = targets_usd, preds_usd
             torch.save(model.state_dict(), best_loss_path)
 
         if pocid_improved:
             best_pocid = metrics["pocid_percent"]
+            best_pocid_epoch = epoch + 1
             torch.save(model.state_dict(), best_pocid_path)
 
         if mse_improved or pocid_improved:
@@ -141,6 +162,8 @@ def objective(trial):
     run.summary["best_val_mse"] = best_val_loss
     run.summary["best_pocid_percent"] = best_pocid
     run.summary["pocid_at_best_val_mse"] = best_loss_pocid
+    run.summary["best_mse_epoch"] = best_mse_epoch
+    run.summary["best_pocid_epoch"] = best_pocid_epoch
     run.summary["epochs_ran"] = epoch + 1
     run.summary["early_stopped"] = (epoch + 1) < max_epochs
 
