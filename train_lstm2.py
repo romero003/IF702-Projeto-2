@@ -37,6 +37,14 @@ def objective(trial):
         project="miniprojeto2-bitcoin-lstm",
         name=run_name,
         group="lstm_optimization",
+        tags=[
+            "lstm",
+            "optuna",
+            "multiobjective",
+            f"criterion-{criterion_name.lower()}",
+            f"seq-{seq_length}",
+            f"trial-{trial.number}"
+        ],
         config={
             "lr": lr,
             "hidden_size": hidden_size,
