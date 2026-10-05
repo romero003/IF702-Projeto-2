@@ -19,7 +19,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 ENTITY = "Proj-IF702"
 PROJECT = "miniprojeto2-bitcoin-lstm"
 
-def fetch_best_run_from_wandb(group_name, metric_name="val_loss", mode="min"):
+def fetch_best_run_from_wandb(group_name, metric_name="val_loss", mode="min",tag="03/10"):
     """
     Busca todas as runs do grupo no WandB e retorna a melhor run com base na métrica informada.
     
@@ -28,9 +28,15 @@ def fetch_best_run_from_wandb(group_name, metric_name="val_loss", mode="min"):
     :param mode: 'min' se menor é melhor (perdas/erros), 'max' se maior é melhor (acurácia).
     """
     api = wandb.Api()
+
+     # Filtra por grupo E pela tag '03/10' diretamente no servidor do WandB
+    filters = {
+        "group": group_name,
+        "tags": {"$in": [tag]}
+        }
     
     # Filtra apenas pelo grupo diretamente no servidor do WandB
-    runs = api.runs(f"{ENTITY}/{PROJECT}", filters={"group": group_name})
+    runs = api.runs(f"{ENTITY}/{PROJECT}", filters=filters)
     
     best_run = None
     best_value = float("inf") if mode == "min" else float("-inf")
@@ -56,7 +62,8 @@ def download_checkpoint_from_wandb(run, preferred_prefix="best_loss_"):
     """
     Faz o download do arquivo .pth associado à run diretamente do servidor do WandB.
     """
-    os.makedirs("./checkpoints", exist_ok=True)
+    checkpoints_dir = os.path.abspath("./checkpoints")
+    os.makedirs(checkpoints_dir, exist_ok=True)
     
     # Procura o arquivo .pth salvo nos arquivos da run
     target_file = None
@@ -73,11 +80,15 @@ def download_checkpoint_from_wandb(run, preferred_prefix="best_loss_"):
     if target_file is None:
         raise FileNotFoundError(f"Nenhum arquivo .pth encontrado na run {run.id} do WandB.")
 
-    download_path = os.path.join("./checkpoints", os.path.basename(target_file.name))
     print(f"📥 Baixando '{target_file.name}' da run {run.id}...")
-    target_file.download(root="./checkpoints", replace=True)
-    print(f"✅ Checkpoint salvo localmente em: {download_path}")
+    # O wandb baixa mantendo a estrutura de diretórios do repositório (ex: ./checkpoints/files/nome.pth)
+    downloaded_file = target_file.download(root=checkpoints_dir, replace=True)
     
+    # Obtém o caminho real de onde o arquivo foi salvo no disco
+    download_path = downloaded_file.name
+    
+    print(f"✅ Checkpoint salvo localmente em: {download_path}")
+
     return download_path
 
 
@@ -146,9 +157,22 @@ def evaluate_best_model_wandb(group_name, model_type="LSTM"):
     
     user_info = run.user.username if hasattr(run, "user") and run.user else "N/A"
     print(f"Run Campeã WandB: {run.name} (ID: {run.id}) | Criador: {user_info}")
+    
+    
     if val_loss is not None:
         print(f"Val Loss (WandB Summary): {val_loss:.6f}")
     print("Config do WandB Online:", config)
+
+    # Extrai diretamente do summary usando os nomes das chaves gravadas no treino
+    # (Ajuste os nomes entre aspas caso no seu treino você tenha usado prefixos diferentes)
+    val_metrics = {
+        "loss": run.summary.get("best_val_mse", run.summary.get("val_loss", run.summary.get("val_mse"))),
+        "mape": run.summary.get("val_mape", run.summary.get("best_val_mape")),
+        "mae": run.summary.get("val_mae", run.summary.get("best_val_mae")),
+        "rmse": run.summary.get("val_rmse", run.summary.get("best_val_rmse")),
+        "pocid": run.summary.get("val_pocid", run.summary.get("best_val_pocid")),
+    }
+    
 
     # 1. Baixa o checkpoint diretamente do WandB
     try:
@@ -160,7 +184,7 @@ def evaluate_best_model_wandb(group_name, model_type="LSTM"):
     batch_size = config.get("batch_size", 32)
     seq_length = config.get("seq_length", 30)
 
-    # 2. Carrega o DataLoader de Teste e o Scaler (4 retornos)
+    # 2. Carrega o DataLoader de Teste e o Scaler
     _, _, test_loader, scaler = get_dataloaders(batch_size=batch_size, seq_length=seq_length)
 
     # 3. Instancia o modelo LSTM usando a configuração da nuvem
@@ -182,6 +206,7 @@ def evaluate_best_model_wandb(group_name, model_type="LSTM"):
     # 5. Avalia no conjunto de Teste (Regressão)
     metrics, test_loss, inf_time = evaluate_on_test(model, test_loader, scaler)
 
+    '''
     run.summary.update({
         "test_loss": float(test_loss),
         "test_mape_percent": float(metrics["test_mape"]),
@@ -192,6 +217,7 @@ def evaluate_best_model_wandb(group_name, model_type="LSTM"):
         "test_checkpoint": os.path.basename(checkpoint_path)
     })
     run.update()
+    '''
 
     print(f"-> TEST Loss: {test_loss:.6f}")
     print(f"-> TEST MAPE: {metrics['test_mape']:.2f}%")
@@ -204,6 +230,14 @@ def evaluate_best_model_wandb(group_name, model_type="LSTM"):
         "Model": model_type.upper(),
         "WandB Run ID": run.id,
         "Val Loss (WandB)": round(val_loss, 6) if val_loss is not None else None,
+
+        # Métricas de Validação (Direto do WandB)
+        "Val Loss": round(val_metrics["loss"], 6) if val_metrics["loss"] is not None else "N/A",
+        "Val MAPE (%)": round(val_metrics["mape"], 2) if val_metrics["mape"] is not None else "N/A",
+        "Val MAE": round(val_metrics["mae"], 4) if val_metrics["mae"] is not None else "N/A",
+        "Val RMSE": round(val_metrics["rmse"], 4) if val_metrics["rmse"] is not None else "N/A",
+        "Val POCID (%)": round(val_metrics["pocid"], 2) if val_metrics["pocid"] is not None else "N/A",
+        
         "Test Loss": round(test_loss, 6),
         "Test MAPE (%)": round(metrics["test_mape"], 2),
         "Test MAE": round(metrics["test_mae"], 4),
