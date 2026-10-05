@@ -166,13 +166,13 @@ def evaluate_best_model_wandb(group_name, model_type="LSTM"):
     # Extrai diretamente do summary usando os nomes das chaves gravadas no treino
     # (Ajuste os nomes entre aspas caso no seu treino você tenha usado prefixos diferentes)
     val_metrics = {
-        "loss": run.summary.get("best_val_mse", run.summary.get("val_loss", run.summary.get("val_mse"))),
-        "mape": run.summary.get("val_mape", run.summary.get("best_val_mape")),
-        "mae": run.summary.get("val_mae", run.summary.get("best_val_mae")),
-        "rmse": run.summary.get("val_rmse", run.summary.get("best_val_rmse")),
-        "pocid": run.summary.get("val_pocid", run.summary.get("best_val_pocid")),
+        "loss": run.summary.get("best_val_mse", run.summary.get("val_mse")),
+        "mape": run.summary.get("best_val_mape", run.summary.get("val_mape_percent")),
+        "mae": run.summary.get("best_val_mae", run.summary.get("val_mae_usd")),
+        "rmse": run.summary.get("best_val_rmse", run.summary.get("val_rmse_usd")),
+        "pocid": run.summary.get("pocid_at_best_val_mse", run.summary.get("best_pocid_percent")),
     }
-    
+
 
     # 1. Baixa o checkpoint diretamente do WandB
     try:
