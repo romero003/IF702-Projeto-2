@@ -227,3 +227,5 @@ checkpoints/
 
 .venv2
 data
+
+pareto*
